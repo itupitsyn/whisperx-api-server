@@ -20,6 +20,8 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    restart: unless-stopped
+
   whisperx-api-server-cpu:
     env_file: ".env"
     image: whisperx-api-server-cpu
@@ -34,6 +36,9 @@ services:
     volumes:
       - hugging_face_cache:/root/.cache/huggingface
       - torch_cache:/root/.cache/torch
+    restart: unless-stopped
+
 volumes:
   hugging_face_cache:
   torch_cache:
+
