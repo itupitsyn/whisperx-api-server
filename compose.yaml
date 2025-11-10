@@ -1,5 +1,6 @@
 services:
   whisperx-api-server-cuda:
+    env_file: ".env"
     image: whisperx-api-server-cuda
     build:
       context: .
@@ -20,6 +21,7 @@ services:
               count: 1
               capabilities: [gpu]
   whisperx-api-server-cpu:
+    env_file: ".env"
     image: whisperx-api-server-cpu
     build:
       context: .

@@ -3,6 +3,7 @@ import asyncio
 import contextlib
 import torch
 import gc
+import os
 from collections import defaultdict
 from asyncio import Lock
 from typing import Union, List, Optional, Tuple, Any
@@ -32,6 +33,7 @@ alignment_cache_mod_lock = Lock()
 transcribe_pipeline_instances = {}
 transcribe_locks = defaultdict(Lock)
 
+
 def unload_model_object(model_obj: Any):
     if model_obj is None:
         return
@@ -44,6 +46,7 @@ def unload_model_object(model_obj: Any):
     # 3) Force GC and empty cache
     gc.collect()
     torch.cuda.empty_cache()
+
 
 class CustomWhisperModel(whisperx_asr.WhisperModel):
     def __init__(
@@ -69,7 +72,7 @@ class CustomWhisperModel(whisperx_asr.WhisperModel):
             download_root=download_root,
             local_files_only=local_files_only,
             files=files,
-            **model_kwargs
+            **model_kwargs,
         )
         self.model_size_or_path = model_size_or_path
         self.device = device
@@ -119,7 +122,7 @@ def initialize_model(model_name: str) -> CustomWhisperModel:
         cpu_threads=config.whisper.cpu_threads,
         num_workers=config.whisper.num_workers,
         local_files_only=config.whisper.local_files_only,
-        download_root=config.whisper.download_root
+        download_root=config.whisper.download_root,
     )
 
 
@@ -163,6 +166,7 @@ async def load_model_instance(model_name: str):
         init_func=lambda: asyncio.to_thread(initialize_model, model_name),
     )
 
+
 # -------------------------------------------------------------------------
 # Transcribe pipeline loading
 # -------------------------------------------------------------------------
@@ -170,10 +174,13 @@ def _hashable_vad_options(vad_options: Any) -> Any:
     if vad_options is None:
         return None
     if isinstance(vad_options, dict):
-        return tuple(sorted((k, _hashable_vad_options(v)) for k, v in vad_options.items()))
+        return tuple(
+            sorted((k, _hashable_vad_options(v)) for k, v in vad_options.items())
+        )
     if isinstance(vad_options, (list, tuple)):
         return tuple(_hashable_vad_options(v) for v in vad_options)
     return vad_options
+
 
 async def load_transcribe_pipeline_cached(
     whispermodel: CustomWhisperModel,
@@ -185,7 +192,11 @@ async def load_transcribe_pipeline_cached(
         whispermodel.model_size_or_path,
         whispermodel.device,
         whispermodel.compute_type,
-        config.whisper.vad_method.value if hasattr(config.whisper.vad_method, "value") else config.whisper.vad_method,
+        (
+            config.whisper.vad_method.value
+            if hasattr(config.whisper.vad_method, "value")
+            else config.whisper.vad_method
+        ),
         config.whisper.vad_model,
         _hashable_vad_options(config.whisper.vad_options),
     )
@@ -219,6 +230,7 @@ async def load_transcribe_pipeline_cached(
 
     return pipeline
 
+
 # -------------------------------------------------------------------------
 # Alignment model loading
 # -------------------------------------------------------------------------
@@ -242,10 +254,11 @@ async def _cleanup_alignment_cache_whitelist():
                     unload_model_object(align_model_data.get("model"))
                     del align_model_data
 
+
 async def load_align_model_cached(
     language_code: str,
     model_name: Optional[str] = None,
-    model_dir: Optional[str] = None
+    model_dir: Optional[str] = None,
 ) -> Tuple[Any, Any]:
     """
     Loads and caches alignment models based on language codes (or "multilingual")
@@ -261,20 +274,28 @@ async def load_align_model_cached(
     selected_model_name = model_name
     if "multilingual" in config.alignment.models:
         selected_model_name = config.alignment.models["multilingual"]
-        logger.info(f"Overriding with 'multilingual' alignment model: {selected_model_name}")
+        logger.info(
+            f"Overriding with 'multilingual' alignment model: {selected_model_name}"
+        )
     elif language_code in config.alignment.models:
         selected_model_name = config.alignment.models[language_code]
-        logger.info(f"Using configured alignment model for '{language_code}': {selected_model_name}")
+        logger.info(
+            f"Using configured alignment model for '{language_code}': {selected_model_name}"
+        )
 
     # Decide how to key the cache
-    if (selected_model_name is not None
-        and selected_model_name == config.alignment.models.get("multilingual")):
+    if (
+        selected_model_name is not None
+        and selected_model_name == config.alignment.models.get("multilingual")
+    ):
         cache_key = "multilingual"
     else:
         cache_key = language_code
 
     logger.debug(f"config.alignment.models = {config.alignment.models}")
-    logger.debug(f"Incoming language_code = {language_code}, model_name param = {model_name}")
+    logger.debug(
+        f"Incoming language_code = {language_code}, model_name param = {model_name}"
+    )
 
     async def _init_alignment():
         try:
@@ -285,11 +306,13 @@ async def load_align_model_cached(
                     language_code=language_code,
                     device=inference_device,
                     model_name=selected_model_name,
-                    model_dir=model_dir
-                )
+                    model_dir=model_dir,
+                ),
             )
         except Exception as e:
-            logger.error(f"Failed to load alignment model for language '{language_code}': {e}")
+            logger.error(
+                f"Failed to load alignment model for language '{language_code}': {e}"
+            )
             raise
 
         return {"model": align_model, "metadata": align_metadata}
@@ -309,7 +332,9 @@ async def load_align_model_cached(
         async with alignment_cache_mod_lock:
             removed_data = align_model_instances.pop(cache_key, None)
             if removed_data is not None:
-                logger.info(f"Unloading alignment model from cache (disabled): {cache_key}")
+                logger.info(
+                    f"Unloading alignment model from cache (disabled): {cache_key}"
+                )
                 model_obj = removed_data.get("model")
                 if model_obj is not None:
                     unload_model_object(model_obj)
@@ -330,8 +355,14 @@ async def load_diarize_model_cached(model_name: str):
     inference_device = _determine_inference_device()
 
     def _init_diarization():
-        logger.info(f"Loading diarization pipeline for model: {model_name} with device: {inference_device}")
-        return whisperx_diarize.DiarizationPipeline(model_name=model_name, device=inference_device)
+        logger.info(
+            f"Loading diarization pipeline for model: {model_name} with device: {inference_device}"
+        )
+        return whisperx_diarize.DiarizationPipeline(
+            model_name=model_name,
+            use_auth_token=os.getenv("HF_TOKEN"),
+            device=inference_device,
+        )
 
     diarize_model = await _get_or_init_model(
         key=model_name,
@@ -346,7 +377,9 @@ async def load_diarize_model_cached(model_name: str):
         # Immediately remove from cache, unload from GPU memory
         removed_model = diarize_model_instances.pop(model_name, None)
         if removed_model is not None:
-            logger.info(f"Unloading diarization model from cache (disabled): {model_name}")
+            logger.info(
+                f"Unloading diarization model from cache (disabled): {model_name}"
+            )
             unload_model_object(removed_model)
 
     return diarize_model

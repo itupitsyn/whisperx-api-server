@@ -131,7 +131,7 @@ async def _diarize_audio(result, audio, request_id):
     try:
         diarization_model_start = time.time()
         logger.info(f"Request ID: {request_id} - Loading diarization model")
-        diarize_model = await load_diarize_model_cached(model_name="tensorlake/speaker-diarization-3.1")
+        diarize_model = await load_diarize_model_cached(model_name="pyannote/speaker-diarization-3.1")
         logger.info(f"Request ID: {request_id} - Diarization model loaded. Loading took {time.time() - diarization_model_start:.2f} seconds. Starting diarization")
 
         def _run_diarization():
@@ -139,7 +139,7 @@ async def _diarize_audio(result, audio, request_id):
                 return diarize_model(audio)
         diarize_start = time.time()
         diarize_segments = await loop.run_in_executor(None, _run_diarization)
-        result["segments"] = whisperx_diarize.assign_word_speakers(diarize_segments, result["segments"])
+        result["segments"] = whisperx_diarize.assign_word_speakers(diarize_segments, result["segments"])["segments"]
         logger.info(f"Request ID: {request_id} - Diarization took {time.time() - diarize_start:.2f} seconds")
         return result
     except Exception as e:
@@ -209,7 +209,7 @@ async def transcribe(
         if diarize:
             result = await _diarize_audio(result, audio, request_id)
 
-        result = _finalize_text(result, align or diarize)
+        # result = _finalize_text(result, align or diarize)
 
         logger.info(f"Request ID: {request_id} - Transcription completed for {audio_file.filename}")
 
